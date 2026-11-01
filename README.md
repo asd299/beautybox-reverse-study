@@ -41,6 +41,17 @@ BeautyBox 5.1.5 逆向分析靶场（本地学习用）。
 - 断网时 `h.a()`（ConnectivityManager 判定）为 false，请求链根本不启动，`ea5` 不执行 → 不闪退；联网后第一个请求加密即 abort，此时还没有任何数据包发出。
 - **修复**：`Server/e.smali` 的 `c()`（请求方向）改为 `String.getBytes("UTF-8")` 明文直通、`a()`（响应方向）改为 `new String(bytes,"UTF-8")` 明文直通，绕过 `libali.so`。传输层本身是标准 OkHttp POST，与 native 无关，明文化不影响模拟器上的通信流程。
 
+### 4. 启动页加载完后闪退真因
+
+联网闪退修复后实测出现第二段闪退：启动页动画正常走完，随后崩溃。定位：
+
+- splash 探测（`Server/i.c()`）无论成败都会回调 `OuiCrGxF.T0()` 发主配置请求（`Server/v.b + v.c`，即 `POST /v13/1`）。
+- 响应回调 `OuiCrGxF$q.run()` **没有任何 try/catch**：直接 `f.d()`（Gson.fromJson）解析响应体，再裸取 `code`、`data.sys` 等字段。
+- 原版协议里响应体是加密二进制（本仓库已把解密改成明文直通），服务器返回的加密内容被当 UTF-8 解出乱码 → Gson 抛 `JsonSyntaxException`（或解析出 `data:null` 后 NPE）→ **UI 线程未捕获异常 → 闪退**。
+- 同一请求链的持久化/回读（`MainApplication.w()/k()`）走 `Server/e.d()/e.b()` → `libali.so` 的 `ea2/da2`，与 `ea5` 同属转译层下的 abort 风险点。
+- **修复**：① `OuiCrGxF$q.run()` 整体 try/catch(Throwable)，异常一律降级到 `a1()`（「Server not available」对话框）并打 `BBFIX` 日志；② `Server/e.b()/e.d()` 改恒等直通（本地配置明文存取自洽，`ea2/da2` 不再被调用）；③ echo 回调 `OuiCrGxF$m.c()` 同样加 catch 兜底。
+- 实测：配置响应不可解析时应用存活、弹降级对话框、logcat 0 FATAL（见 TESTING.md 第四节）。
+
 ## 修改清单（Release 产物）
 
 | 修改 | 位置 | 内容 |
@@ -48,6 +59,7 @@ BeautyBox 5.1.5 逆向分析靶场（本地学习用）。
 | 闪退修复 | `p0/d`、`p0/a`、`p0/e`、`ExitHook`（新增） | 检测器 stub + exit 拦截 |
 | 闪退修复（联网） | `Yclh4J3zF.m0()` 清空 | m0 原逻辑=逆序 finish 全部 Activity + 清栈 + exit。服务器校验签名失败下发指令走 8 个调用点触发 m0 → 界面全关=闪退观感（断网连不上服务器故不闪退）。清空后 8 个调用点全部 no-op |
 | 联网 native 闪退修复 | `Server/e.smali` `c()`/`a()` | 请求加密 `ea5`/响应解密 `da5`（libali.so）改为 UTF-8 明文直通。ARM 库在 x86_64 转译层（libndk_translation）下 ea5 必 SIGABRT——这是「断网正常、联网必闪退」的真因（详见分析结论 3） |
+| 启动页后闪退修复 | `OuiCrGxF$q.run()`、`OuiCrGxF$m.c()`、`Server/e.smali` `b()`/`d()` | 配置响应解析全程 try/catch，异常降级「Server not available」对话框（BBFIX 日志）；`da2/ea2` 恒等直通（本地配置明文存取自洽）；详见分析结论 4 |
 | 会员放行 | `User/a.smali` | `isExpired()` 恒返回 `false` |
 | 智能选服 | `Server/i.smali` `c()` | 原「按数组顺序取第一个可达」改为：探测全部 4 个节点，选延迟最小者交换到首位 |
 | 崩溃吞掉不外传 | `MainApplication$d.uncaughtException` 清空 | 保留 handler 挂载（维持原版吞异常行为），删除 `oslog/new` 上报 |

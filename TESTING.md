@@ -5,8 +5,8 @@
 | 文件 | md5 | 说明 |
 |---|---|---|
 | [`BeautyBox_5.1.5.apk`](BeautyBox_5.1.5.apk) | — | 原版 APK（对照组，在模拟器上启动即静默退出） |
-| [`BeautyBox_5.1.5_tile.apk`](BeautyBox_5.1.5_tile.apk) | `b91b580b823119a3b0f53b631be021f5` | 成品 APK（原版服务器列表 + 全部修复，zipalign + v1/v2/v3 测试签名） |
-| [`BeautyBox_5.1.5_tile_mocktest.apk`](BeautyBox_5.1.5_tile_mocktest.apk) | `ed8b411109438d93ef28e950b011aa4b` | mock 测试专用包：仅将 `Server/i.smali` 的 4 个服务器硬编码为 `http://10.0.2.2:20999`，其余与成品完全一致 |
+| [`BeautyBox_5.1.5_tile.apk`](BeautyBox_5.1.5_tile.apk) | `7ab04ed40f162cca3b3789cce8cbe3c1` | 成品 APK（原版服务器列表 + 全部修复，zipalign + v1/v2/v3 测试签名） |
+| [`BeautyBox_5.1.5_tile_mocktest.apk`](BeautyBox_5.1.5_tile_mocktest.apk) | `c8d795e052fe66ce4d800a0618333608` | mock 测试专用包：`Server/i.smali` 4 个探测服务器与 `Server/v.smali` 的 `v.a/v.b` 配置服务器均硬编码为 `http://10.0.2.2:20999`，其余与成品完全一致 |
 
 包名：`com.secret.prettyhezi.tile`（原版 `com.secret.prettyhezi` + `.tile` 后缀）
 版本号：5.1.5 (versionCode 120)，与原版一致。两个 tile 包与原版签名不同，混装前先卸载旧包。
@@ -55,10 +55,14 @@ adb logcat -d | grep -E "FATAL EXCEPTION|EXITHOOK"   # 应无输出
 
 断网正常、联网必闪退的根因**不在 Java 层**：
 
-- 所有请求/响应都过 `libali.so`：`Server.e.c(String,int)` → `c.abc.ea5([BI)[B`（请求加密），`Server.e.a([BI)` → `c.abc.da5([BI)[B`（响应解密）。
+- 所有请求/响应都过 `libali.so`：`Server.e.c(String,int)` → `c.abc.ea5([BI)[B`（请求加密），`Server.e.a([BI)` → `c.abc.da5([BI)[B`（响应解密）；配置持久化/回读（`MainApplication.w()/k()`）另走 `e.d()/e.b()` → `ea2/da2`。
 - x86_64 模拟器的 ARM 转译层（libndk_translation）执行 `ea5` 时，JNI `CallVoidMethodA` 收到 null 对象 → SIGABRT。
 - 断网时 `h.a()`（ConnectivityManager）为 false，请求链不启动 → 不闪退；联网后**第一个请求加密即 abort，发生在任何网络包发出之前**。
-- 成品修复：`Server/e.smali` 的 `c()`/`a()` 改为 UTF-8 明文直通（传输层本来就是 OkHttp POST，明文化不影响流程）。
+- 成品修复：`Server/e.smali` 的 `c()`/`a()` 改为 UTF-8 明文直通（传输层本来就是 OkHttp POST，明文化不影响流程），`b()`/`d()` 恒等直通（本地配置明文存取自洽）。
+
+### 2.1 启动页加载完后闪退（第二段，已修）
+
+联网闪退修复后，splash 动画走完仍会崩：探测回调 `OuiCrGxF$k` 无条件发主配置请求（`POST /v13/1`），其响应回调 `OuiCrGxF$q.run()` **无任何 try/catch**——Gson 解析不可解析的响应体（真实服务器返回加密乱码）直接抛 `JsonSyntaxException`/NPE → UI 线程未捕获 → 闪退。修复：`$q.run()` 与 echo 回调 `$m.c()` 全程 catch(Throwable) 降级到「Server not available」对话框（logcat 标签 `BBFIX`）。
 
 ### 2. 本地 mock 服务器（明文 HTTP，端口 20999）
 
@@ -129,9 +133,10 @@ adb logcat -d | grep -cE "FATAL EXCEPTION|SIGABRT|JNI DETECTED"   # 应为 0
 
 ### 5. 通过标准（本仓库实测结果）
 
-1. **mock 日志出现 4 条 `POST /query?v=1.3 HTTP/1.1" 200`**——4 个服务器探测全部到达 mock（实测 t≈36s 出现，13:27:53–54）；
-2. **进程 150s+ 存活、logcat 0 次 FATAL/SIGABRT**——修复前：联网后第一个请求即 SIGABRT，pid 50s 内消失；修复后全程存活；
-3. UI 弹「**Server not available, please try later**」对话框属**预期正常**——mock 返回的是假数据（`data=AA==`），应用收到响应、明文解码、解析失败后优雅降级为对话框（不再走 m0 闪退链）。对话框提供 Exit App / Latest Site 两个按钮，点任一都不会闪退。
+1. **mock 日志出现 4 条 `POST /query?v=1.3 HTTP/1.1" 200` + 1 条 `POST /v13/1 HTTP/1.1" 200`**——4 个服务器探测 + 1 条主配置请求全部到达 mock（实测 t≈48s 出现）；
+2. **logcat 出现 `BBFIX : splash config response invalid -> degrade to server-unavailable dialog`**——配置响应（mock 假数据 `data:"AA=="` 是字符串，Gson 期望对象必抛）被新加的 catch 捕获并降级。**修复前该代码路径无任何保护，响应不可解析=UI 线程未捕获异常=闪退**；
+3. **进程 180s+ 存活、logcat 0 次 FATAL/SIGABRT/JNI DETECTED**——修复前：联网后第一个请求即 SIGABRT；两段修复后 splash 全流程走完且存活；
+4. UI 弹「**Server not available, please try later**」对话框（Exit App / Latest Site 按钮）属**预期正常**——现在是 `$q.run()` catch 主动降级的结果，点任一按钮都不闪退。
 
 > 该测试证明的是「联网→发包→收响应→解析」全链路不再触发 native 闪退；应用与真实服务器的完整业务交互不在靶场范围内。
 
@@ -153,7 +158,8 @@ adb logcat -d | grep -cE "FATAL EXCEPTION|SIGABRT|JNI DETECTED"   # 应为 0
 | 环境检测器 stub | `p0/d` `p0/a` `p0/e` | 模拟器上能启动（原版直接退出） |
 | `System.exit` 拦截 | 新增 `ExitHook`，6 处替换 | logcat 搜 EXITHOOK（静默版无输出即未触发） |
 | `m0()` 清空（防 finish-all 闪退） | `Yclh4J3zF.smali` | mock 测试中弹「Server not available」对话框且点按钮不退出 |
-| 联网 native 闪退修复（ea5/da5 明文直通） | `Server/e.smali` `c()`/`a()` | mock 联网测试通过标准第 1、2 条（修复前第一个请求即 SIGABRT） |
+| 联网 native 闪退修复（ea5/da5 明文直通） | `Server/e.smali` `c()`/`a()` | mock 联网测试通过标准第 1、3 条（修复前第一个请求即 SIGABRT） |
+| 启动页后闪退修复（配置响应 catch 降级 + da2/ea2 恒等直通） | `OuiCrGxF$q.run()`、`OuiCrGxF$m.c()`、`Server/e.smali` `b()`/`d()` | 通过标准第 2 条（BBFIX 日志）+ 第 3、4 条（不闪退、对话框降级） |
 | 会员放行 | `User/a.smali isExpired()` 恒 false | 界面会员状态 |
 | 最小延迟选服 | `Server/i.smali c()` | mock 下 4 节点全通时响应最快者置顶 |
 | 崩溃上报禁用（吞异常不上传） | `MainApplication$d.uncaughtException` 清空 | 无 oslog/new 外发请求 |
