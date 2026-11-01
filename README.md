@@ -5,7 +5,8 @@ BeautyBox 5.1.5 逆向分析靶场（本地学习用）。
 ## 仓库内容
 
 - `BeautyBox_5.1.5.apk` — 原版 APK（靶场样本）
-- `BeautyBox_5.1.5_tile.apk` — 成品 APK（原版服务器列表 + 全部修复）
+- `BeautyBox_5.1.5_tile.apk` — 成品 APK（原版服务器列表 + 全部修复，明文直通版，适合模拟器）
+- `BeautyBox_5.1.5_armfix-signed.apk` — 真机专用 APK（原生加密保留 + 防闪退补丁，包名 `.tile`，详见结论 5）
 - `BeautyBox_5.1.5_tile_mocktest.apk` — 模拟器 mock 测试专用包（4 个服务器硬编码为 `http://10.0.2.2:20999`，配合本地 mock 验证联网链路）
 - `角色/逆向工程师.md` — 分析方法论
 - Releases — 分析产物 APK
@@ -51,6 +52,30 @@ BeautyBox 5.1.5 逆向分析靶场（本地学习用）。
 - 同一请求链的持久化/回读（`MainApplication.w()/k()`）走 `Server/e.d()/e.b()` → `libali.so` 的 `ea2/da2`，与 `ea5` 同属转译层下的 abort 风险点。
 - **修复**：① `OuiCrGxF$q.run()` 整体 try/catch(Throwable)，异常一律降级到 `a1()`（「Server not available」对话框）并打 `BBFIX` 日志；② `Server/e.b()/e.d()` 改恒等直通（本地配置明文存取自洽，`ea2/da2` 不再被调用）；③ echo 回调 `OuiCrGxF$m.c()` 同样加 catch 兜底。
 - 实测：配置响应不可解析时应用存活、弹降级对话框、logcat 0 FATAL（见 TESTING.md 第四节）。
+
+### 5. 原版包名触发的隐藏退出（真机版必须改包名）
+
+为在真机上保留原生加密协议，曾构建「原版树 + 仅 14 个防闪退补丁、包名保持 `com.secret.prettyhezi`」的 armfix 包，结果**离线**状态启动约 2.7 秒即静默退出：
+
+- logcat 证据：`cret.prettyhez: System.exit called, status: 0` + `Process ... has died: fg TOP`，发生在 splash 阶段、**无任何网络交互**（离线）→ 排除服务器下发指令。
+- Java 层 grep 确认补丁树 **0 处 `System.exit`** 残留（6 处原调用点已换 `ExitHook.block`）；签名读取点排查（`p0/a`、`b0/c`、`g4/a`）均非退出源。退出点藏在反射调用/native `libali.so`/动态加载 dex 中，未定位。
+- **对照实验**：同一棵树仅把包名改为 `com.secret.prettyhezi.tile`（`apktool.yml` 的 `renameManifestPackage` + FileProvider authorities 同步改名），离线启动 60s+ 存活、0 exit、0 FATAL；联网后仅剩 `ea5` 在 x86_64 转译层的已知 SIGABRT（真机 ARM 不存在）。
+- **结论**：原版包名是某条隐藏完整性校验的触发条件（大概率校验原版签名，包名不同则校验分支直接跳过——此前 `.tile` 系列包从未触发）。真机版必须使用 `.tile` 包名。
+
+## 真机版（armfix）说明
+
+`BeautyBox_5.1.5_armfix-signed.apk` 与 `tile.apk` 的区别：
+
+| | tile.apk（模拟器/明文直通版） | armfix-signed.apk（真机/原生加密版） |
+|---|---|---|
+| 请求加密 `ea5`/响应解密 `da5`、配置存取 `ea2/da2` | UTF-8 明文直通 | **保留 `libali.so` native 原版调用**（与真实服务器协议兼容） |
+| 服务器列表/选服 | 原版 4 节点 + 智能选服补丁 | 原版 4 节点、原版逻辑（未动） |
+| 防闪退补丁（14 文件） | 有 | 有（`ExitHook` 新增 + `MainApplication$d`、`OuiCrGxF$c/$d$a/$h$a/$i$a/$m/$q`、`User/a`、`Yclh4J3zF`、`ZIgnJ$c`、`p0/a`、`p0/d`、`p0/e`） |
+| 包名 | `com.secret.prettyhezi.tile` | 同左（**必须**，绕过隐藏 exit，见结论 5） |
+| 适用环境 | 真机 + x86 模拟器 | **仅真机（ARM）**；x86_64 模拟器上 `ea5` 转译层必 SIGABRT |
+| 会员 | 放行（`isExpired()` 恒 false） | 同左 |
+
+真机安装：直接安装即可（包名为 `.tile`，与原版可共存；如需与原版隔离数据可先卸载原版）。签名为本仓库测试签名，与原版签名不同属预期。若启动后仍提示「服务连接不上」，说明服务器端对请求载荷中的设备/签名字段做了校验，属协议层问题，非本包闪退缺陷。
 
 ## 修改清单（Release 产物）
 

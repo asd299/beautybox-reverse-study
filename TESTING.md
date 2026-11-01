@@ -7,6 +7,7 @@
 | [`BeautyBox_5.1.5.apk`](BeautyBox_5.1.5.apk) | — | 原版 APK（对照组，在模拟器上启动即静默退出） |
 | [`BeautyBox_5.1.5_tile.apk`](BeautyBox_5.1.5_tile.apk) | `7ab04ed40f162cca3b3789cce8cbe3c1` | 成品 APK（原版服务器列表 + 全部修复，zipalign + v1/v2/v3 测试签名） |
 | [`BeautyBox_5.1.5_tile_mocktest.apk`](BeautyBox_5.1.5_tile_mocktest.apk) | `c8d795e052fe66ce4d800a0618333608` | mock 测试专用包：`Server/i.smali` 4 个探测服务器与 `Server/v.smali` 的 `v.a/v.b` 配置服务器均硬编码为 `http://10.0.2.2:20999`，其余与成品完全一致 |
+| [`BeautyBox_5.1.5_armfix-signed.apk`](BeautyBox_5.1.5_armfix-signed.apk) | `fa2ee3abe905e8d9f3257094b26e9570` | **真机（ARM）专用**：保留 `libali.so` 原生加密与原版服务器逻辑，仅叠加 14 个防闪退补丁，包名 `.tile`（见第六节） |
 
 包名：`com.secret.prettyhezi.tile`（原版 `com.secret.prettyhezi` + `.tile` 后缀）
 版本号：5.1.5 (versionCode 120)，与原版一致。两个 tile 包与原版签名不同，混装前先卸载旧包。
@@ -164,3 +165,27 @@ adb logcat -d | grep -cE "FATAL EXCEPTION|SIGABRT|JNI DETECTED"   # 应为 0
 | 最小延迟选服 | `Server/i.smali c()` | mock 下 4 节点全通时响应最快者置顶 |
 | 崩溃上报禁用（吞异常不上传） | `MainApplication$d.uncaughtException` 清空 | 无 oslog/new 外发请求 |
 | 包名 `.tile` 后缀 | Manifest + `g4/a.smali` | `adb shell pm list packages \| grep tile` |
+
+## 六、真机（ARM）测试：armfix 包
+
+`BeautyBox_5.1.5_armfix-signed.apk` 是**真机专用**包：保留 `libali.so` 原生加密（`ea5/da5/ea2/da2` 原版调用）与原版服务器列表/选服逻辑，仅叠加 14 个防闪退补丁文件（`ExitHook` 新增 + `MainApplication$d`、`OuiCrGxF$c/$d$a/$h$a/$i$a/$m/$q`、`User/a`、`Yclh4J3zF`、`ZIgnJ$c`、`p0/a`、`p0/d`、`p0/e`），包名 `com.secret.prettyhezi.tile`。
+
+- **不要在 x86_64 模拟器上测这个包**：native 加密在 ARM 转译层下 `ea5` 必 SIGABRT（模拟器请用 tile.apk / mocktest 包，见第四节）。
+- **包名不能改回原版**：原版包名 `com.secret.prettyhezi` 会触发一条隐藏完整性校验——离线、splash 阶段（约 2.7s）即静默 `System.exit(0)`；Java 层补丁树 0 处 exit，退出点在反射/native/动态 dex 中（未定位）。同树仅改包名为 `.tile` 的对照实验 60s+ 存活、0 exit（详见 README 结论 5）。
+
+### 安装与验证
+
+```bash
+# 包名 .tile 与原版可共存；如需隔离数据可先卸载原版
+adb install -r BeautyBox_5.1.5_armfix-signed.apk
+adb logcat -c
+adb shell am start -n com.secret.prettyhezi.tile/com.secret.prettyhezi.OuiCrGxF
+adb shell pidof com.secret.prettyhezi.tile    # 应持续存在（>60s）
+adb logcat -d | grep -E "System.exit called|FATAL EXCEPTION"   # 应无输出
+```
+
+### 通过标准（本仓库模拟器冒烟实测 + 真机预期）
+
+1. 启动 60s+ 进程存活、0 `System.exit`、0 FATAL（模拟器离线冒烟实测：60s 存活，联网后仅剩模拟器限制项 SIGABRT）；
+2. 联网后 logcat 若出现 `AsyncTask #1` 的 SIGABRT 属 **x86_64 模拟器限制**（`ea5` 转译层），真机 ARM 上不会发生；
+3. 真机预期流程：splash → 加密请求发出 → 原生解密 → 进入应用。若弹「Server not available, please try later」且 `BBFIX` 日志显示响应不可解析，说明服务器端对请求载荷中的设备/签名字段做了校验——属协议层问题，非本包闪退缺陷。
