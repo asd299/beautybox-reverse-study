@@ -35,10 +35,13 @@ BeautyBox 5.1.5 逆向分析靶场（本地学习用）。
 | 修改 | 位置 | 内容 |
 |---|---|---|
 | 闪退修复 | `p0/d`、`p0/a`、`p0/e`、`ExitHook`（新增） | 检测器 stub + exit 拦截 |
+| 闪退修复（联网） | `Yclh4J3zF.m0()` 清空 | m0 原逻辑=逆序 finish 全部 Activity + 清栈 + exit。服务器校验签名失败下发指令走 8 个调用点触发 m0 → 界面全关=闪退观感（断网连不上服务器故不闪退）。清空后 8 个调用点全部 no-op |
 | 会员放行 | `User/a.smali` | `isExpired()` 恒返回 `false` |
 | 智能选服 | `Server/i.smali` `c()` | 原「按数组顺序取第一个可达」改为：探测全部 4 个节点，选延迟最小者交换到首位 |
-| 禁用上报 | `MainApplication.smali` | 移除 `UncaughtExceptionHandler` 挂载（不再上传崩溃到 `oslog/new`） |
+| 崩溃吞掉不外传 | `MainApplication$d.uncaughtException` 清空 | 保留 handler 挂载（维持原版吞异常行为），删除 `oslog/new` 上报 |
 | 包名后缀 | `AndroidManifest.xml` + `g4/a.smali` | `com.secret.prettyhezi` → `com.secret.prettyhezi.tile`，FileProvider authorities 同步修改，可与原版共存 |
+
+测试方法见 [TESTING.md](TESTING.md)。
 
 ## 构建流程
 
