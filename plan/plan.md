@@ -42,3 +42,16 @@
 ## 遗留说明
 - 服务端 PermissionDenied/LimitReached 分支保留（真实服务端拒绝时仍按原版提示）
 - 模拟器 TCG 软渲染偶发 System UI ANR，属模拟器性能问题，与应用无关（真机无此现象）
+
+## 追加轮（11-02）：散图/套图「黑白限制」分析与 armfix9
+
+用户问：图库/图集/长视频限制与「预览图 + 其余黑白」能否绕过。静态分析结论：
+
+- 类型映射 `g.b(I)`：2=gallery套图 3=rrvideo 4=film长视频 5=book 6=video 7=photo散图
+- 长视频 = 热门同权限体系：`B0xzEmZ.F1()` fc≥999 或 dur≥600 → p1（服务端校验，同热门，不可客户端绕过）
+- 服务端对 gallery/rrvideo/film/audio 的 PermissionDenied 有专门分支（EkHbSOqG.x0 → t1 权限弹窗）
+- expire.p1/p2/p3 仅用于交易页显示（HYAOV.d1 格式化），无闸门逻辑 → 改本地时长无法欺骗服务端
+- **黑白限制机制**：图片项 `Server/t$a{m 预览路径, p 原图路径}`；客户端恒加载 m，`p` 为空（服务端对锁定项不下发原图路径）时叠加本地灰度滤镜（View/y$c.d → g4/h.O ColorMatrix 饱和度 0）
+- 结论：黑白 = 客户端滤镜（可去除），彩色内容为 m 预览变体；全尺寸原图 p 仅服务端授权后下发（同视频 hash，不可绕）
+
+**armfix9 补丁**（= armfix8 + 1 行）：`g4/h.O()` 开头 `return-object p0`，全局禁用灰度滤镜。真机实测待用户反馈：无权限时散图/套图锁定项是否由黑白变为彩色预览。
