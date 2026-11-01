@@ -53,14 +53,18 @@ BeautyBox 5.1.5 逆向分析靶场（本地学习用）。
 - **修复**：① `OuiCrGxF$q.run()` 整体 try/catch(Throwable)，异常一律降级到 `a1()`（「Server not available」对话框）并打 `BBFIX` 日志；② `Server/e.b()/e.d()` 改恒等直通（本地配置明文存取自洽，`ea2/da2` 不再被调用）；③ echo 回调 `OuiCrGxF$m.c()` 同样加 catch 兜底。
 - 实测：配置响应不可解析时应用存活、弹降级对话框、logcat 0 FATAL（见 TESTING.md 第四节）。
 
-### 5. 原版包名触发的隐藏退出（真机版必须改包名）
+### 5. 原生层签名校验（真机版的真正障碍与破解）
 
-为在真机上保留原生加密协议，曾构建「原版树 + 仅 14 个防闪退补丁、包名保持 `com.secret.prettyhezi`」的 armfix 包，结果**离线**状态启动约 2.7 秒即静默退出：
+真机版（原生加密 + 防闪退补丁）的闪退根因是 **`libali.so` 内置的签名/包名完整性校验**，行为分两种：
 
-- logcat 证据：`cret.prettyhez: System.exit called, status: 0` + `Process ... has died: fg TOP`，发生在 splash 阶段、**无任何网络交互**（离线）→ 排除服务器下发指令。
-- Java 层 grep 确认补丁树 **0 处 `System.exit`** 残留（6 处原调用点已换 `ExitHook.block`）；签名读取点排查（`p0/a`、`b0/c`、`g4/a`）均非退出源。退出点藏在反射调用/native `libali.so`/动态加载 dex 中，未定位。
-- **对照实验**：同一棵树仅把包名改为 `com.secret.prettyhezi.tile`（`apktool.yml` 的 `renameManifestPackage` + FileProvider authorities 同步改名），离线启动 60s+ 存活、0 exit、0 FATAL；联网后仅剩 `ea5` 在 x86_64 转译层的已知 SIGABRT（真机 ARM 不存在）。
-- **结论**：原版包名是某条隐藏完整性校验的触发条件（大概率校验原版签名，包名不同则校验分支直接跳过——此前 `.tile` 系列包从未触发）。真机版必须使用 `.tile` 包名。
+- **包名 = 原版 `com.secret.prettyhezi`**：初始化（`c.abc.abe(Context)`，splash `OuiCrGxF` 调用）即校验 `getPackageInfo` 签名，与内置证书不符 → 静默 `System.exit(0)`（离线启动 ~2.7s，Java 层 0 处 exit）。
+- **包名 ≠ 原版（`.tile`）**：初始化校验跳过（模拟器离线 60s+ 存活），但联网后首次调用 `ea5/da5` 时，native 校验失败分支把 null 对象传给 `CallVoidMethodA` → ART `JniAbort`（tombstone：`JNI DETECTED ERROR IN APPLICATION: obj == null`，帧 `libndk_translation DoTrampoline_JNIEnv_CallVoidMethodV` 之下——null 来自 libali.so 自身，不是转译层引入）→ **真机 ARM 同样 abort**，表现为启动页后快速闪退。
+- so 内 strings 佐证：`()Landroid/content/pm/PackageManager;`、`(Ljava/lang/String;I)Landroid/content/pm/PackageInfo;`——native 通过 JNI 回调 `getPackageManager().getPackageInfo(...)` 取签名。
+
+**破解（Java 层签名 spoof，`bbfix/Spoof`）**：`OuiCrGxF` 的 `abe()` 调用点改为 `Spoof.init(Context)`——包一层 `ContextWrapper`：`getPackageName()` 返回原版包名、`getPackageManager()` 返回代理（仅 `getPackageInfo*` 三个重载把 `signatures` 替换为**从原版 APK 提取的 X.509 证书 DER**，其余 94 个抽象方法全量委托真实 pm）→ native 校验读到「原版包名 + 原版签名」→ 通过。
+
+- 模拟器实测（联网，真实服务器）：`BBSPOOF: abe() invoked with spoofed context`，splash → **正常进入登录界面**，75s+ 存活，0 exit / 0 abort / 0 FATAL（对照：无 spoof 同条件 30s 内必 SIGABRT 于 AsyncTask #1）。
+- 实现注记：Spoof 类以 `classes2.dex` 之外的**主 dex smali**（`smali/bbfix/`）打包；曾尝试 zip 追加独立 `classes2.dex` 导致覆盖原包 desugar 类（`j$/util/*`）→ gson `<clinit>` NoClassDefFoundError。
 
 ## 真机版（armfix）说明
 
@@ -89,6 +93,7 @@ BeautyBox 5.1.5 逆向分析靶场（本地学习用）。
 | 智能选服 | `Server/i.smali` `c()` | 原「按数组顺序取第一个可达」改为：探测全部 4 个节点，选延迟最小者交换到首位 |
 | 崩溃吞掉不外传 | `MainApplication$d.uncaughtException` 清空 | 保留 handler 挂载（维持原版吞异常行为），删除 `oslog/new` 上报 |
 | 包名后缀 | `AndroidManifest.xml` + `g4/a.smali` | `com.secret.prettyhezi` → `com.secret.prettyhezi.tile`，FileProvider authorities 同步修改，可与原版共存 |
+| 真机版签名 spoof | `bbfix/Spoof`（新增）+ `OuiCrGxF` abe 调用点 | 原生加密版专供：ContextWrapper + PackageManager 代理返回原版包名/证书，穿透 `libali.so` 原生签名校验（详见结论 5） |
 
 测试方法见 [TESTING.md](TESTING.md)。
 
