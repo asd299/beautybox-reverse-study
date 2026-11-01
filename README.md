@@ -112,6 +112,33 @@ zipalign -f -p 4 BeautyBox_5.1.5_tile.apk out.apk && mv out.apk BeautyBox_5.1.5_
 apksigner sign --ks testsign.keystore --ks-pass pass:android --key-pass pass:android BeautyBox_5.1.5_tile.apk
 ```
 
+## 七、去广告与去限制（armfix8，2026-11-01）
+
+在 armfix6（原包名+Spoof）基础上叠加两组补丁，产物 `BeautyBox_5.1.5_armfix8-signed.apk`（md5 `0b874af1608791020e14c274c1de576f`），模拟器实测通过。
+
+### 去广告
+自建广告系统（无第三方 SDK）：`com/secret/AD/`，数据入口 `AD/c.a(I)`（取广告列表）/`c.b(I)`（判断某类型广告存在），数据源为服务器配置 `Server/g.ads[]`。
+
+**补丁**：stub 化 [smali/com/secret/AD/c.smali](../decomp/smali/com/secret/AD/c.smali)——`a(I)` 恒返回空 `ArrayList`、`b(I)` 恒返回 `0`。所有广告位（splash/信息流/视频页/游戏页）走原版"无数据 → setVisibility(GONE)"正常分支，不碰流程回调，无残留逻辑。
+
+### 去限制（永久热门视频权限）
+"999 热门"= 收藏数 fc≥999 的内容。原版需开通热门权限（日/月/年/永久），否则列表点击与服务端 show/play 均受限。权限模型：
+
+- 服务端登录响应 `Server/a0.permission (a0$g{p1,p2,p3})` 下发布尔位，`p1`=热门权限；
+- 客户端预检：`View/i`（列表点击，fc≥999 且无 p1 → 弹"需要热门权限"）、`B0xzEmZ.F1()`（视频：fc<999 且时长<600s 免权限，否则查 p1）、`WV6yEmE.F1()`、`VOGkBN.F1()`（rrvideo 查 p2）。
+
+**补丁**（4 处，全部强制放行）：
+1. `View/i` perm.p1 读取 → `const/4 v0, 1`
+2. `B0xzEmZ.F1()` → 恒 `return true`
+3. `WV6yEmE.F1()` → 恒 `return true`
+4. `VOGkBN.F1()` perm.p2 读取 → `const/4 v0, 1`
+
+服务端 `show/play` 请求本身不带权限参数（按会话判定），实测补丁后服务端对热门视频正常下发播放数据——即服务端并未对正常会话强制校验热门权限，拦截全部在客户端。
+
+### 实测结论（模拟器，测试账号登录）
+- 启动页/主界面无广告；公告、跑马灯（应用自身系统）正常；
+- 热门视频（AllT 排序 fc=999）点开无权限弹窗，详情页加载、视频正常播放，复现两个样本均通过。
+
 ## 免责声明
 
 本仓库仅用于本地靶场的 Android 逆向学习，所有分析与产物不得用于其他用途。

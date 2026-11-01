@@ -194,3 +194,16 @@ adb logcat -d | grep -E "System.exit called|Fatal signal|FATAL EXCEPTION"   # �
 4. 0 `System.exit` / 0 `Fatal signal` / 0 `FATAL EXCEPTION`（对照：无 Spoof 原名包离线 2.7s exit、联网 AsyncTask #1 SIGABRT）。
 
 真机预期与模拟器一致（native 原生执行）。若真机上出现异常，抓 `adb logcat -b crash -d` 与 `grep -E "BBSPOOF|BBFIX"` 输出用于定位。
+
+## 七、armfix8（去广告+去限制）实测记录（2026-11-01，模拟器）
+
+产物：`BeautyBox_5.1.5_armfix8-signed.apk`（md5 `0b874af1608791020e14c274c1de576f`）＝ armfix6 + 去广告 stub + 4 处热门权限放行。
+
+1. 安装启动：splash 无广告直接进登录页；
+2. 登录 `niaohai1`：弹出图片点选验证码（依次点击指定字符），人工点选两轮通过，登录成功进入主界面；
+3. 去广告确认：主界面无广告位，公告/会话/通知列表与顶部跑马灯（应用自身系统）加载正常；
+4. 去限制确认：侧边栏 → 短视频 → AllT 排序（全为 fc=999 热门）→ 点击第一个热门视频：**无"需要热门权限"弹窗**，详情页正常加载，画面持续变化 + 到 CDN 的 https 连接确认视频播放中；
+5. 复现：返回列表点第二个热门视频，同样直接播放；
+6. 稳定性：0 crash / 0 System.exit；期间 System UI ANR 为 TCG 软渲染模拟器性能问题，与应用无关。
+
+真机（ARM）预期一致，可直接安装 `BeautyBox_5.1.5_armfix8-signed.apk` 验证。
