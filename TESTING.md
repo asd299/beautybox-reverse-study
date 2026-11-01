@@ -7,7 +7,7 @@
 | [`BeautyBox_5.1.5.apk`](BeautyBox_5.1.5.apk) | — | 原版 APK（对照组，在模拟器上启动即静默退出） |
 | [`BeautyBox_5.1.5_tile.apk`](BeautyBox_5.1.5_tile.apk) | `7ab04ed40f162cca3b3789cce8cbe3c1` | 成品 APK（原版服务器列表 + 全部修复，zipalign + v1/v2/v3 测试签名） |
 | [`BeautyBox_5.1.5_tile_mocktest.apk`](BeautyBox_5.1.5_tile_mocktest.apk) | `c8d795e052fe66ce4d800a0618333608` | mock 测试专用包：`Server/i.smali` 4 个探测服务器与 `Server/v.smali` 的 `v.a/v.b` 配置服务器均硬编码为 `http://10.0.2.2:20999`，其余与成品完全一致 |
-| [`BeautyBox_5.1.5_armfix-signed.apk`](BeautyBox_5.1.5_armfix-signed.apk) | `e3599c979937c8480dbe19ad21568759` | **真机（ARM）专用**：保留 `libali.so` 原生加密与原版服务器逻辑，14 防闪退补丁 + `bbfix/Spoof` 签名 spoof（穿透 native 校验），包名 `.tile`（见第六节） |
+| [`BeautyBox_5.1.5_armfix-signed.apk`](BeautyBox_5.1.5_armfix-signed.apk) | `a638e1967a3025e0bb2943c1e996a2db` | **真机（ARM）专用**：保留 `libali.so` 原生加密与原版服务器逻辑，14 防闪退补丁 + `bbfix/Spoof` 签名 spoof（穿透 native 校验），**原版包名** `com.secret.prettyhezi`（见第六节） |
 
 包名：`com.secret.prettyhezi.tile`（原版 `com.secret.prettyhezi` + `.tile` 后缀）
 版本号：5.1.5 (versionCode 120)，与原版一致。两个 tile 包与原版签名不同，混装前先卸载旧包。
@@ -168,27 +168,29 @@ adb logcat -d | grep -cE "FATAL EXCEPTION|SIGABRT|JNI DETECTED"   # 应为 0
 
 ## 六、真机（ARM）测试：armfix 包
 
-`BeautyBox_5.1.5_armfix-signed.apk` 是**真机专用**包：保留 `libali.so` 原生加密（`ea5/da5/ea2/da2` 原版调用）与原版服务器列表/选服逻辑，叠加 14 个防闪退补丁 + **`bbfix/Spoof` 签名 spoof**（新增 `OuiCrGxF$CW/$PMP` 两个内部类），包名 `com.secret.prettyhezi.tile`。
+`BeautyBox_5.1.5_armfix-signed.apk` 是**真机专用**包：保留 `libali.so` 原生加密（`ea5/da5/ea2/da2` 原版调用）与原版服务器列表/选服逻辑，叠加 14 个防闪退补丁 + **`bbfix/Spoof` 签名 spoof**（新增 `Spoof$CW/$PMP` 两个内部类），**包名为原版** `com.secret.prettyhezi`。
 
-- **为什么需要 Spoof**：`libali.so` 原生层通过 JNI 回调 `getPackageManager().getPackageInfo(...)` 校验包名+签名。原版包名+非原版签名 → 初始化即 `System.exit(0)`；`.tile` 包名 → 校验延后到 `ea5/da5` 调用，失败分支传 null 给 `CallVoidMethodA` → ART JniAbort（**真机上表现为启动页后快速闪退**，详见 README 结论 5）。`Spoof.init(Context)` 包一层 ContextWrapper（返回原版包名 + 代理 pm 返回原版证书签名）使校验通过。
-- **不要在 x86_64 模拟器上跑原版 native 加密的旧版包**（无 Spoof 的版本联网必 SIGABRT）；本包（含 Spoof）已在 x86_64 模拟器联网实测通过，真机 ARM 上 native 原生执行更无问题。
-- **包名保持 `.tile`**：与原版共存；Spoof 在运行时对 native 层呈现原版包名，无需改回。
+- **为什么需要 Spoof**：`libali.so` 原生层通过 JNI 回调 `getPackageManager().getPackageInfo(...)` 校验包名+签名。原版包名+非原版签名 → 初始化即 `System.exit(0)`（离线 ~2.7s）；Spoof 在 `abe()` 入口包一层 ContextWrapper（`getPackageName()` 返回原版名、代理 pm 的 `getPackageInfo*` 把 `signatures` 替换为原版证书 DER）使校验通过。模拟器实测：原包名 + Spoof 离线 60s+ 存活 0 exit（对照无 Spoof 同条件 2.7s 必死）。
+- **包名为原版**：与原版 APK / 旧 `.tile` 包互斥（签名不同），安装前必须卸载已装的同包名应用。
+- x86_64 模拟器联网实测通过（splash → 登录界面）；真机 ARM native 原生执行更无问题。
 
 ### 安装与验证
 
 ```bash
+adb uninstall com.secret.prettyhezi        # 与原版同包名，先卸旧（会清原版数据）
 adb install -r BeautyBox_5.1.5_armfix-signed.apk
 adb logcat -c
-adb shell am start -n com.secret.prettyhezi.tile/com.secret.prettyhezi.OuiCrGxF
-adb shell pidof com.secret.prettyhezi.tile    # 应持续存在（>60s）
-adb logcat -d | grep BBSPOOF                  # 应有: abe() invoked with spoofed context
+adb shell am start -n com.secret.prettyhezi/com.secret.prettyhezi.OuiCrGxF
+adb shell pidof com.secret.prettyhezi      # 应持续存在（>60s）
+adb logcat -d | grep BBSPOOF               # 应有: abe() invoked with spoofed context
 adb logcat -d | grep -E "System.exit called|Fatal signal|FATAL EXCEPTION"   # 应无输出
 ```
 
-### 通过标准（x86_64 模拟器联网实测结果）
+### 通过标准（x86_64 模拟器离线+联网实测结果）
 
 1. `BBSPOOF` 日志出现（spoof context 已传入 native 初始化）；
-2. splash 后**正常进入登录界面**（真实服务器交互成功，非降级对话框）；
-3. 75s+ 进程存活、0 `System.exit` / 0 `Fatal signal` / 0 `FATAL EXCEPTION`（对照：无 Spoof 同条件 30s 内 AsyncTask #1 SIGABRT）。
+2. 离线 60s+ 存活、0 `System.exit`（原包名初始化校验被 spoof 穿透）；
+3. 联网后 splash 正常走完**进入登录界面**（真实服务器交互成功，非降级对话框）；
+4. 0 `System.exit` / 0 `Fatal signal` / 0 `FATAL EXCEPTION`（对照：无 Spoof 原名包离线 2.7s exit、联网 AsyncTask #1 SIGABRT）。
 
 真机预期与模拟器一致（native 原生执行）。若真机上出现异常，抓 `adb logcat -b crash -d` 与 `grep -E "BBSPOOF|BBFIX"` 输出用于定位。

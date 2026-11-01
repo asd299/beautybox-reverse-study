@@ -64,6 +64,7 @@ BeautyBox 5.1.5 逆向分析靶场（本地学习用）。
 **破解（Java 层签名 spoof，`bbfix/Spoof`）**：`OuiCrGxF` 的 `abe()` 调用点改为 `Spoof.init(Context)`——包一层 `ContextWrapper`：`getPackageName()` 返回原版包名、`getPackageManager()` 返回代理（仅 `getPackageInfo*` 三个重载把 `signatures` 替换为**从原版 APK 提取的 X.509 证书 DER**，其余 94 个抽象方法全量委托真实 pm）→ native 校验读到「原版包名 + 原版签名」→ 通过。
 
 - 模拟器实测（联网，真实服务器）：`BBSPOOF: abe() invoked with spoofed context`，splash → **正常进入登录界面**，75s+ 存活，0 exit / 0 abort / 0 FATAL（对照：无 spoof 同条件 30s 内必 SIGABRT 于 AsyncTask #1）。
+- **原包名版本验证**：Spoof 同样适用于原版包名——`com.secret.prettyhezi` + Spoof 离线 60s+ 存活 0 exit（对照无 Spoof 同条件 2.7s 必死）、联网进登录界面。当前真机版即原包名（安装前须卸载原版/旧包，同包名互斥）。
 - 实现注记：Spoof 类以 `classes2.dex` 之外的**主 dex smali**（`smali/bbfix/`）打包；曾尝试 zip 追加独立 `classes2.dex` 导致覆盖原包 desugar 类（`j$/util/*`）→ gson `<clinit>` NoClassDefFoundError。
 
 ## 真机版（armfix）说明
@@ -75,11 +76,11 @@ BeautyBox 5.1.5 逆向分析靶场（本地学习用）。
 | 请求加密 `ea5`/响应解密 `da5`、配置存取 `ea2/da2` | UTF-8 明文直通 | **保留 `libali.so` native 原版调用**（与真实服务器协议兼容） |
 | 服务器列表/选服 | 原版 4 节点 + 智能选服补丁 | 原版 4 节点、原版逻辑（未动） |
 | 防闪退补丁（14 文件） | 有 | 有（`ExitHook` 新增 + `MainApplication$d`、`OuiCrGxF$c/$d$a/$h$a/$i$a/$m/$q`、`User/a`、`Yclh4J3zF`、`ZIgnJ$c`、`p0/a`、`p0/d`、`p0/e`） |
-| 包名 | `com.secret.prettyhezi.tile` | 同左（**必须**，绕过隐藏 exit，见结论 5） |
+| 包名 | `com.secret.prettyhezi.tile` | **原版包名** `com.secret.prettyhezi`（Spoof 对 native 层呈现原版包名+签名；与原版 APK 同包名互斥，安装前先卸载原版） |
 | 适用环境 | 真机 + x86 模拟器 | **仅真机（ARM）**；x86_64 模拟器上 `ea5` 转译层必 SIGABRT |
 | 会员 | 放行（`isExpired()` 恒 false） | 同左 |
 
-真机安装：直接安装即可（包名为 `.tile`，与原版可共存；如需与原版隔离数据可先卸载原版）。签名为本仓库测试签名，与原版签名不同属预期。若启动后仍提示「服务连接不上」，说明服务器端对请求载荷中的设备/签名字段做了校验，属协议层问题，非本包闪退缺陷。
+真机安装：**先卸载已装的原版/旧包再安装**（原版包名，签名不同互斥）。签名为本仓库测试签名，与原版签名不同属预期（native 校验已由 Spoof 穿透）。若启动后仍提示「服务连接不上」，说明服务器端对请求载荷中的设备/签名字段做了校验，属协议层问题，非本包闪退缺陷。
 
 ## 修改清单（Release 产物）
 
